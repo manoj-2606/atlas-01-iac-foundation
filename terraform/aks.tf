@@ -32,7 +32,9 @@ resource "azurerm_kubernetes_cluster" "main" {
   resource_group_name = azurerm_resource_group.main.name
   dns_prefix          = var.project_name
   kubernetes_version  = var.aks_kubernetes_version
+  oidc_issuer_enabled = true
   tags                = local.default_tags
+
 
   # --- Identity ---
   identity {
