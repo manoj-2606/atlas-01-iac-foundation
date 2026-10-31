@@ -25,7 +25,7 @@ param(
     [string]$AcrName = "",
 
     [Parameter(Mandatory = $false)]
-    [bool]$PeeringEnabled = $true,
+    [string]$PeeringEnabled = $true,
 
     [Parameter(Mandatory = $false)]
     [int]$ExpectedNodeCount = 1
@@ -36,6 +36,7 @@ $ErrorActionPreference = "Stop"
 $passCount = 0
 $failCount = 0
 $totalChecks = 0
+$PeeringEnabledBool = $PeeringEnabled -eq "true"
 
 function Test-Check {
     param([string]$Name, [scriptblock]$Check)

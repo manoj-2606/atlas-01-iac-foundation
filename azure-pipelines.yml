@@ -269,5 +269,5 @@ stages:
                 -ResourceGroupName "$(rgName)"
                 -AksClusterName "$(aksName)"
                 -AcrName "$(acrName)"
-                -PeeringEnabled ([System.Convert]::ToBoolean("$(peeringEnabled)"))
+                -PeeringEnabled $$true
                 -ExpectedNodeCount 1
