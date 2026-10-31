@@ -41,24 +41,24 @@ resource "azurerm_kubernetes_cluster" "main" {
 
   # --- Default Node Pool ---
   default_node_pool {
-    name                = "system"
-    node_count          = var.aks_node_count
-    vm_size             = var.aks_node_size
-    os_disk_size_gb     = 30
-    vnet_subnet_id      = azurerm_subnet.aks.id
-    type                = "VirtualMachineScaleSets"  # Required for autoscaling
-    tags                = local.default_tags
+    name            = "system"
+    node_count      = var.aks_node_count
+    vm_size         = var.aks_node_size
+    os_disk_size_gb = 30
+    vnet_subnet_id  = azurerm_subnet.aks.id
+    type            = "VirtualMachineScaleSets" # Required for autoscaling
+    tags            = local.default_tags
 
     # Ephemeral OS disk — uses the VM's local SSD instead of managed disk
     # Faster boot, no disk cost, but data lost on reimage/restart
     # Perfect for non-prod where node state doesn't matter
-    os_disk_type = "Managed"  # Use Managed for B2s (no local SSD large enough for Ephemeral)
+    os_disk_type = "Managed" # Use Managed for B2s (no local SSD large enough for Ephemeral)
   }
 
   # --- Networking ---
   network_profile {
-    network_plugin    = "azure"       # Azure CNI — pods get real VNet IPs
-    network_policy    = "calico"      # Calico NetworkPolicy enforcement
+    network_plugin    = "azure"  # Azure CNI — pods get real VNet IPs
+    network_policy    = "calico" # Calico NetworkPolicy enforcement
     service_cidr      = "172.16.0.0/16"
     dns_service_ip    = "172.16.0.10"
     load_balancer_sku = "standard"
@@ -66,7 +66,7 @@ resource "azurerm_kubernetes_cluster" "main" {
 
   # --- Auto-upgrade channel ---
   # patch = auto-apply minor K8s patches. No breaking changes.
-  automatic_upgrade_channel = "patch"
+  automatic_channel_upgrade = "patch"
 }
 
 # =============================================================================
@@ -86,5 +86,5 @@ resource "azurerm_role_assignment" "aks_acr_pull" {
   principal_id                     = azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id
   role_definition_name             = "AcrPull"
   scope                            = azurerm_container_registry.main[0].id
-  skip_service_principal_aad_check = true  # Speed up — we know it's a managed identity
+  skip_service_principal_aad_check = true # Speed up — we know it's a managed identity
 }

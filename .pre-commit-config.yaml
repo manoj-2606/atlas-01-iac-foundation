@@ -1,0 +1,32 @@
+# =============================================================================
+# Pre-commit Hooks — DevSecOps Gate at Commit Time
+# =============================================================================
+# Runs automatically before every `git commit`. If any hook fails,
+# the commit is blocked. Secrets never reach Git history.
+#
+# Setup (one-time per machine):
+#   pip install pre-commit
+#   pre-commit install            # hooks into .git/hooks/pre-commit
+#   pre-commit run --all-files    # test against existing files
+#
+# Interview: "I use pre-commit hooks with gitleaks. Secrets are caught
+# before they enter Git history — not after, when it's too late."
+# =============================================================================
+
+repos:
+  # --- gitleaks: secret detection ---
+  # Scans staged files for API keys, passwords, tokens, connection strings.
+  # If it finds anything that looks like a secret, commit is blocked.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+
+  # --- Terraform fmt: consistent formatting ---
+  # Ensures all .tf files follow canonical Terraform style.
+  # Auto-fixes formatting issues before commit.
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.96.1
+    hooks:
+      - id: terraform_fmt
+      - id: terraform_validate

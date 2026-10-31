@@ -1,0 +1,45 @@
+# =============================================================================
+# .gitignore — Terraform + DevOps project
+# =============================================================================
+
+# --- Terraform ---
+# State files — NEVER commit. Contains secrets, resource IDs, outputs.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Plan files — binary, may contain sensitive values
+*.tfplan
+
+# Provider plugins — downloaded on init, large, platform-specific
+.terraform/
+.terraform.lock.hcl
+
+# Override files — local dev overrides that shouldn't be shared
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Variable files with secrets (if someone creates one)
+*.secret.tfvars
+
+# Crash logs
+crash.log
+crash.*.log
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- Scripts output ---
+*.log
+validation-results/
