@@ -57,9 +57,9 @@ function Test-Check {
 }
 
 Write-Host ""
-Write-Host "=" * 60
+Write-Host ("=" * 60)
 Write-Host "  ATLAS-01 POST-DEPLOYMENT VALIDATION"
-Write-Host "=" * 60
+Write-Host ("=" * 60)
 Write-Host ""
 
 # =============================================================================
@@ -192,14 +192,14 @@ Write-Host "    DESTROY AFTER USE to avoid unnecessary cost." -ForegroundColor Y
 # SUMMARY
 # =============================================================================
 Write-Host ""
-Write-Host "=" * 60
+Write-Host ("=" * 60)
 if ($failCount -eq 0) {
     Write-Host "  RESULT: ALL $totalChecks CHECKS PASSED" -ForegroundColor Green
 } else {
     Write-Host "  RESULT: $failCount/$totalChecks CHECKS FAILED" -ForegroundColor Red
 }
 Write-Host "  Passed: $passCount | Failed: $failCount | Total: $totalChecks"
-Write-Host "=" * 60
+Write-Host ("=" * 60)
 Write-Host ""
 
 # Exit with failure if any check failed — pipeline stage will fail

@@ -26,9 +26,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 Write-Host ""
-Write-Host "=" * 60
+Write-Host ("=" * 60)
 Write-Host "  ATLAS-01 POST-DESTROY VALIDATION"
-Write-Host "=" * 60
+Write-Host ("=" * 60)
 Write-Host ""
 
 # =============================================================================
@@ -106,7 +106,7 @@ Write-Host "  [INFO] Backend state storage (rg-atlas-tfstate) is NOT deleted her
 Write-Host "    It's shared across projects. Delete manually only when all projects are done."
 
 Write-Host ""
-Write-Host "=" * 60
+Write-Host ("=" * 60)
 Write-Host "  CLEANUP VALIDATION COMPLETE"
-Write-Host "=" * 60
+Write-Host ("=" * 60)
 Write-Host ""
