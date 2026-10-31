@@ -1,0 +1,273 @@
+# =============================================================================
+# atlas-01-iac-foundation — Deploy Pipeline
+# =============================================================================
+# Stages: Bootstrap → Plan → Apply → Validate
+#
+# What makes this pipeline different from other atlas projects:
+# - Bootstrap stage creates backend storage (idempotent)
+# - Post-apply validation uses PowerShell (AzurePowerShell@5)
+# - Mix of Bash (AzureCLI@2) + PowerShell (AzurePowerShell@5) tasks
+# - Plan artifact published and consumed across stages
+# =============================================================================
+
+trigger: none   # Manual runs only — infrastructure pipelines should never auto-trigger
+pr: none
+
+variables:
+  - group: atlas-01-vars
+  - name: terraformVersion
+    value: "1.7.5"
+  - name: workingDirectory
+    value: "terraform"
+
+# =============================================================================
+# STAGE 1 — BOOTSTRAP (Backend Storage)
+# =============================================================================
+# Creates Azure Blob storage for Terraform remote state.
+# Idempotent: safe to run multiple times. || true on every command.
+# This runs BEFORE Terraform — it's the chicken that lays the state egg.
+# =============================================================================
+stages:
+  - stage: Bootstrap
+    displayName: "1 — Bootstrap Backend Storage"
+    jobs:
+      - job: CreateBackend
+        displayName: "Create State Storage (idempotent)"
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: AzureCLI@2
+            displayName: "Create RG + Storage Account + Container"
+            inputs:
+              azureSubscription: $(serviceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+
+                echo "=== Creating backend resource group ==="
+                az group create \
+                  --name $(backendResourceGroup) \
+                  --location $(location) \
+                  --tags purpose=terraform-state managed-by=pipeline \
+                  --output none || true
+
+                echo "=== Creating storage account ==="
+                az storage account create \
+                  --name $(backendStorageAccount) \
+                  --resource-group $(backendResourceGroup) \
+                  --location $(location) \
+                  --sku Standard_LRS \
+                  --kind StorageV2 \
+                  --min-tls-version TLS1_2 \
+                  --allow-blob-public-access false \
+                  --output none || true
+
+                echo "=== Creating blob container ==="
+                az storage container create \
+                  --name $(backendContainer) \
+                  --account-name $(backendStorageAccount) \
+                  --auth-mode login \
+                  --output none || true
+
+                echo "=== Backend storage ready ==="
+
+  # =============================================================================
+  # STAGE 2 — PLAN
+  # =============================================================================
+  # terraform init → fmt check → validate → plan → publish plan artifact
+  # Plan artifact ensures Apply uses the EXACT same plan that was reviewed.
+  # =============================================================================
+  - stage: Plan
+    displayName: "2 — Terraform Plan"
+    dependsOn: Bootstrap
+    condition: succeeded()
+    jobs:
+      - job: TerraformPlan
+        displayName: "Init + Validate + Plan"
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+
+          - script: |
+              curl -sLo terraform.zip \
+                https://releases.hashicorp.com/terraform/$(terraformVersion)/terraform_$(terraformVersion)_linux_amd64.zip
+              unzip -o terraform.zip -d /usr/local/bin
+              terraform version
+            displayName: "Install Terraform $(terraformVersion)"
+
+          - task: AzureCLI@2
+            displayName: "Init + fmt + validate + plan"
+            inputs:
+              azureSubscription: $(serviceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+              workingDirectory: $(workingDirectory)
+              inlineScript: |
+                set -e
+
+                # --- OIDC Authentication (no stored secrets) ---
+                export ARM_USE_OIDC=true
+                export ARM_CLIENT_ID=$servicePrincipalId
+                export ARM_OIDC_TOKEN=$idToken
+                export ARM_TENANT_ID=$tenantId
+                export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                echo "=== terraform init ==="
+                terraform init \
+                  -backend-config="resource_group_name=$(backendResourceGroup)" \
+                  -backend-config="storage_account_name=$(backendStorageAccount)" \
+                  -backend-config="container_name=$(backendContainer)" \
+                  -backend-config="key=$(backendKey)" \
+                  -reconfigure
+
+                echo "=== terraform fmt check ==="
+                terraform fmt -recursive -check
+
+                echo "=== terraform validate ==="
+                terraform validate
+
+                echo "=== terraform plan ==="
+                terraform plan -out=$(Build.ArtifactStagingDirectory)/atlas-01.tfplan
+
+          - publish: $(Build.ArtifactStagingDirectory)/atlas-01.tfplan
+            artifact: tfplan
+            displayName: "Publish Plan Artifact"
+
+  # =============================================================================
+  # STAGE 3 — APPLY
+  # =============================================================================
+  # Uses the published plan artifact — applies EXACTLY what was planned.
+  # Approval gate: configured on 'atlas-01-deploy' Environment in ADO UI.
+  #   ADO → Pipelines → Environments → atlas-01-deploy → Approvals and checks
+  # =============================================================================
+  - stage: Apply
+    displayName: "3 — Terraform Apply"
+    dependsOn: Plan
+    condition: succeeded()
+    jobs:
+      - deployment: TerraformApply
+        displayName: "Apply from Plan Artifact"
+        environment: atlas-01-deploy
+        pool:
+          vmImage: ubuntu-latest
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - script: |
+                    curl -sLo terraform.zip \
+                      https://releases.hashicorp.com/terraform/$(terraformVersion)/terraform_$(terraformVersion)_linux_amd64.zip
+                    unzip -o terraform.zip -d /usr/local/bin
+                  displayName: "Install Terraform"
+
+                - download: current
+                  artifact: tfplan
+                  displayName: "Download Plan Artifact"
+
+                - task: AzureCLI@2
+                  displayName: "Init + Apply"
+                  inputs:
+                    azureSubscription: $(serviceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    addSpnToEnvironment: true
+                    workingDirectory: $(workingDirectory)
+                    inlineScript: |
+                      set -e
+
+                      export ARM_USE_OIDC=true
+                      export ARM_CLIENT_ID=$servicePrincipalId
+                      export ARM_OIDC_TOKEN=$idToken
+                      export ARM_TENANT_ID=$tenantId
+                      export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                      terraform init \
+                        -backend-config="resource_group_name=$(backendResourceGroup)" \
+                        -backend-config="storage_account_name=$(backendStorageAccount)" \
+                        -backend-config="container_name=$(backendContainer)" \
+                        -backend-config="key=$(backendKey)" \
+                        -reconfigure
+
+                      terraform apply -auto-approve \
+                        $(Pipeline.Workspace)/tfplan/atlas-01.tfplan
+
+  # =============================================================================
+  # STAGE 4 — VALIDATE (PowerShell)
+  # =============================================================================
+  # Post-apply verification using AzurePowerShell@5.
+  # This is what makes P1 different — mixed Bash + PowerShell tooling.
+  # Reads Terraform outputs → feeds into PowerShell validation script.
+  #
+  # Why a separate stage (not a step in Apply)?
+  # - Clear separation: "deploy" vs "verify" in pipeline UI
+  # - Can re-run validation without re-applying
+  # - Different task type (AzurePowerShell@5 vs AzureCLI@2)
+  # =============================================================================
+  - stage: Validate
+    displayName: "4 — Post-Deploy Validation"
+    dependsOn: Apply
+    condition: succeeded()
+    jobs:
+      - job: ValidateDeployment
+        displayName: "PowerShell Validation Checks"
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+
+          - script: |
+              curl -sLo terraform.zip \
+                https://releases.hashicorp.com/terraform/$(terraformVersion)/terraform_$(terraformVersion)_linux_amd64.zip
+              unzip -o terraform.zip -d /usr/local/bin
+            displayName: "Install Terraform"
+
+          # First: extract outputs via Bash (Terraform CLI)
+          - task: AzureCLI@2
+            displayName: "Extract Terraform Outputs"
+            inputs:
+              azureSubscription: $(serviceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+              workingDirectory: $(workingDirectory)
+              inlineScript: |
+                set -e
+
+                export ARM_USE_OIDC=true
+                export ARM_CLIENT_ID=$servicePrincipalId
+                export ARM_OIDC_TOKEN=$idToken
+                export ARM_TENANT_ID=$tenantId
+                export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                terraform init \
+                  -backend-config="resource_group_name=$(backendResourceGroup)" \
+                  -backend-config="storage_account_name=$(backendStorageAccount)" \
+                  -backend-config="container_name=$(backendContainer)" \
+                  -backend-config="key=$(backendKey)" \
+                  -reconfigure
+
+                # Set pipeline variables from Terraform outputs
+                echo "##vso[task.setvariable variable=rgName]$(terraform output -raw resource_group_name)"
+                echo "##vso[task.setvariable variable=aksName]$(terraform output -raw aks_cluster_name)"
+                echo "##vso[task.setvariable variable=acrName]$(terraform output -raw acr_name)"
+                echo "##vso[task.setvariable variable=peeringEnabled]$(terraform output -raw peering_enabled)"
+
+          # Then: validate via PowerShell (Az module)
+          - task: AzurePowerShell@5
+            displayName: "Run Validate-Deployment.ps1"
+            inputs:
+              azureSubscription: $(serviceConnection)
+              azurePowerShellVersion: LatestVersion
+              ScriptType: FilePath
+              ScriptPath: "scripts/Validate-Deployment.ps1"
+              ScriptArguments: >-
+                -ResourceGroupName "$(rgName)"
+                -AksClusterName "$(aksName)"
+                -AcrName "$(acrName)"
+                -PeeringEnabled ([System.Convert]::ToBoolean("$(peeringEnabled)"))
+                -ExpectedNodeCount 1

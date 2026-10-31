@@ -1,0 +1,104 @@
+# =============================================================================
+# atlas-01-iac-foundation — Destroy Pipeline
+# =============================================================================
+# Separate pipeline file — not a conditional stage in the deploy pipeline.
+# Why? Clean separation. Deploy and destroy are different workflows with
+# different approval gates and different triggers.
+#
+# Stages: Destroy → Validate Cleanup
+# =============================================================================
+
+trigger: none
+pr: none
+
+variables:
+  - group: atlas-01-vars
+  - name: terraformVersion
+    value: "1.7.5"
+  - name: workingDirectory
+    value: "terraform"
+
+stages:
+  # =============================================================================
+  # STAGE 1 — DESTROY
+  # =============================================================================
+  # Approval gate on 'atlas-01-destroy' environment.
+  # terraform init → terraform destroy -auto-approve
+  # Does NOT delete backend storage — that's shared across projects.
+  # =============================================================================
+  - stage: Destroy
+    displayName: "1 — Terraform Destroy"
+    jobs:
+      - deployment: TerraformDestroy
+        displayName: "Destroy All Resources"
+        environment: atlas-01-destroy
+        pool:
+          vmImage: ubuntu-latest
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - script: |
+                    curl -sLo terraform.zip \
+                      https://releases.hashicorp.com/terraform/$(terraformVersion)/terraform_$(terraformVersion)_linux_amd64.zip
+                    unzip -o terraform.zip -d /usr/local/bin
+                  displayName: "Install Terraform"
+
+                - task: AzureCLI@2
+                  displayName: "Init + Destroy"
+                  inputs:
+                    azureSubscription: $(serviceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    addSpnToEnvironment: true
+                    workingDirectory: $(workingDirectory)
+                    inlineScript: |
+                      set -e
+
+                      export ARM_USE_OIDC=true
+                      export ARM_CLIENT_ID=$servicePrincipalId
+                      export ARM_OIDC_TOKEN=$idToken
+                      export ARM_TENANT_ID=$tenantId
+                      export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                      terraform init \
+                        -backend-config="resource_group_name=$(backendResourceGroup)" \
+                        -backend-config="storage_account_name=$(backendStorageAccount)" \
+                        -backend-config="container_name=$(backendContainer)" \
+                        -backend-config="key=$(backendKey)" \
+                        -reconfigure
+
+                      echo "=== Starting terraform destroy ==="
+                      terraform destroy -auto-approve
+                      echo "=== Destroy complete ==="
+
+  # =============================================================================
+  # STAGE 2 — VALIDATE CLEANUP (PowerShell)
+  # =============================================================================
+  # Confirms resources are truly gone. AKS RG deletion is async —
+  # this stage polls until it's confirmed deleted.
+  # =============================================================================
+  - stage: ValidateCleanup
+    displayName: "2 — Validate Cleanup"
+    dependsOn: Destroy
+    condition: succeeded()
+    jobs:
+      - job: ValidateCleanup
+        displayName: "PowerShell Cleanup Checks"
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+
+          - task: AzurePowerShell@5
+            displayName: "Run Validate-Cleanup.ps1"
+            inputs:
+              azureSubscription: $(serviceConnection)
+              azurePowerShellVersion: LatestVersion
+              ScriptType: FilePath
+              ScriptPath: "scripts/Validate-Cleanup.ps1"
+              ScriptArguments: >-
+                -ResourceGroupName "rg-atlas-01-dev"
+                -MaxWaitSeconds 120
