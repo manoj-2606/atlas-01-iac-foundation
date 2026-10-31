@@ -269,5 +269,5 @@ stages:
                 -ResourceGroupName "$(rgName)"
                 -AksClusterName "$(aksName)"
                 -AcrName "$(acrName)"
-                -PeeringEnabled $$true
+                -PeeringEnabled "$(peeringEnabled)"
                 -ExpectedNodeCount 1
